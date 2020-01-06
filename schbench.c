@@ -338,7 +338,7 @@ static void show_latencies(struct stats *s)
 	if (len) {
 		fprintf(stderr, "Latency percentiles (usec)\n");
 		for (i = 0; i < len; i++)
-			fprintf(stderr, "\t%s%2.4fth: %u\n",
+			fprintf(stderr, "\t%s%2.1fth: %u\n",
 				i == PLIST_P99 ? "*" : "",
 				plist[i], ovals[i]);
 	}
@@ -705,7 +705,6 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 	unsigned long sleep_time;
 	/* total number of times we kicked a worker */
 	unsigned long total_wakes = 0;
-	int left;
 	int cur_tid = 0;
 	int i;
 
@@ -719,17 +718,15 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 		usleep(sleep_time);
 
 		gettimeofday(&start, NULL);
-		left = nr_to_wake;
 
 		for (i = 0; i < nr_to_wake; i++) {
 			struct thread_data *worker;
-			struct request *old;
 
 			worker = worker_threads_mem + cur_tid % worker_threads;
 			cur_tid++;
 
 			request = allocate_request();
-			old = request_add(worker, request);
+			request_add(worker, request);
 			total_wakes++;
 			memcpy(&worker->wake_time, &start, sizeof(start));
 			fpost(&worker->futex);
@@ -744,7 +741,16 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 	}
 }
 
+#if defined(__x86_64__) || defined(__i386__)
 #define nop __asm__ __volatile__("rep;nop": : :"memory")
+#elif defined(__aarch64__)
+#define nop __asm__ __volatile__("yield" ::: "memory")
+#elif defined(__powerpc64__)
+#define nop __asm__ __volatile__("nop": : :"memory")
+#else
+#error Unsupported architecture
+#endif
+
 static void usec_spin(unsigned long spin_time)
 {
 	struct timeval now;
