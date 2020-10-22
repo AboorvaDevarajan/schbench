@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # GPLv2 license, spit out /proc/schedstat
+# this works with schedstat v15
 
 import sys,os, time
 
@@ -12,7 +13,7 @@ cpustat_txt = [ 'cpu zeros', # 0
                 'try_to_wakeup(local)', #6
                 'run time', #7
                 'wait time', #8
-                'timeslides,' #9
+                'timeslices,' #9
                 ]
                 
 domain_txt = [ 'domain zeros', #0
