@@ -65,7 +65,7 @@ static volatile unsigned long stopping = 0;
  */
 struct stats {
 	unsigned int plat[PLAT_NR];
-	unsigned int nr_samples;
+	unsigned long nr_samples;
 	unsigned int max;
 	unsigned int min;
 };
@@ -296,12 +296,15 @@ static unsigned int plat_idx_to_val(unsigned int idx)
 
 
 static unsigned int calc_percentiles(unsigned int *io_u_plat, unsigned long nr,
-				     unsigned int **output)
+				     unsigned int **output,
+				     unsigned long **output_counts)
 {
 	unsigned long sum = 0;
 	unsigned int len, i, j = 0;
 	unsigned int oval_len = 0;
 	unsigned int *ovals = NULL;
+	unsigned long *ocounts = NULL;
+	unsigned long last = 0;
 	int is_last;
 
 	len = 0;
@@ -321,51 +324,63 @@ static unsigned int calc_percentiles(unsigned int *io_u_plat, unsigned long nr,
 			if (j == oval_len) {
 				oval_len += 100;
 				ovals = realloc(ovals, oval_len * sizeof(unsigned int));
+				ocounts = realloc(ocounts, oval_len * sizeof(unsigned long));
 			}
 
 			ovals[j] = plat_idx_to_val(i);
+			ocounts[j] = sum;
 			is_last = (j == len - 1);
 			if (is_last)
 				break;
-
 			j++;
 		}
 	}
 
+	for (i = 1; i < len; i++) {
+		last += ocounts[i - 1];
+		ocounts[i] -= last;
+	}
 	*output = ovals;
+	*output_counts = ocounts;
 	return len;
 }
 
 static void calc_p99(struct stats *s, int *p95, int *p99)
 {
 	unsigned int *ovals = NULL;
+	unsigned long *ocounts = NULL;
 	int len;
 
-	len = calc_percentiles(s->plat, s->nr_samples, &ovals);
+	len = calc_percentiles(s->plat, s->nr_samples, &ovals, &ocounts);
 	if (len && len > PLIST_P99)
 		*p99 = ovals[PLIST_P99];
 	if (len && len > PLIST_P99)
 		*p95 = ovals[PLIST_P95];
 	if (ovals)
 		free(ovals);
+	if (ocounts)
+		free(ocounts);
 }
 
 static void show_latencies(struct stats *s, unsigned long long runtime)
 {
 	unsigned int *ovals = NULL;
+	unsigned long *ocounts = NULL;
 	unsigned int len, i;
 
-	len = calc_percentiles(s->plat, s->nr_samples, &ovals);
+	len = calc_percentiles(s->plat, s->nr_samples, &ovals, &ocounts);
 	if (len) {
-		fprintf(stderr, "Latency percentiles (usec) runtime %llu (s)\n", runtime);
+		fprintf(stderr, "Latency percentiles (usec) runtime %llu (s) (%lu total samples)\n", runtime, s->nr_samples);
 		for (i = 0; i < len; i++)
-			fprintf(stderr, "\t%s%2.1fth: %u\n",
+			fprintf(stderr, "\t%s%2.1fth: %u (%lu samples)\n",
 				i == PLIST_P99 ? "*" : "",
-				plist[i], ovals[i]);
+				plist[i], ovals[i], ocounts[i]);
 	}
 
 	if (ovals)
 		free(ovals);
+	if (ocounts)
+		free(ocounts);
 
 	fprintf(stderr, "\tmin=%u, max=%u\n", s->min, s->max);
 }
