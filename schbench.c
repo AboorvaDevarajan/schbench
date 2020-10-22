@@ -991,7 +991,7 @@ static void sleep_for_runtime(struct thread_data *message_threads_mem)
 		gettimeofday(&now, NULL);
 		runtime_delta = tvdelta(&start, &now);
 
-		if (runtime_delta >= runtime_usec)
+		if (runtime_usec && runtime_delta >= runtime_usec)
 			break;
 
 		if (runtime_delta > warmup_usec && !warmup_done && warmuptime) {
