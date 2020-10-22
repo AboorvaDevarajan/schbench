@@ -44,6 +44,8 @@ static int sleeptime = 30000;
 static int warmuptime = 5;
 /* -i  seconds */
 static int intervaltime = 10;
+/* -z  seconds */
+static int zerotime = 0;
 /* -c  usec */
 static unsigned long long cputime = 30000;
 /* -a, bool */
@@ -79,7 +81,7 @@ enum {
 	HELP_LONG_OPT = 1,
 };
 
-char *option_string = "p:am:t:s:c:r:R:w:i:";
+char *option_string = "p:am:t:s:c:r:R:w:i:z:";
 static struct option long_options[] = {
 	{"auto", no_argument, 0, 'a'},
 	{"pipe", required_argument, 0, 'p'},
@@ -91,6 +93,7 @@ static struct option long_options[] = {
 	{"cputime", required_argument, 0, 'c'},
 	{"warmuptime", required_argument, 0, 'w'},
 	{"intervaltime", required_argument, 0, 'i'},
+	{"zerotime", required_argument, 0, 'z'},
 	{"help", no_argument, 0, HELP_LONG_OPT},
 	{0, 0, 0, 0}
 };
@@ -108,6 +111,7 @@ static void print_usage(void)
 		"\t-R (--rps): requests per second mode (count, def: 0)\n"
 		"\t-w (--warmuptime): how long to warmup before resettings stats (seconds, def: 5)\n"
 		"\t-i (--intervaltime): interval for printing latencies (seconds, def: 10)\n"
+		"\t-z (--zerotime): interval for zeroing latencies (seconds, def: never)\n"
 	       );
 	exit(1);
 }
@@ -164,6 +168,9 @@ static void parse_options(int ac, char **av)
 			break;
 		case 'i':
 			intervaltime = atoi(optarg);
+			break;
+		case 'z':
+			zerotime = atoi(optarg);
 			break;
 		case 'R':
 			requests_per_sec = atoi(optarg);
@@ -961,6 +968,7 @@ static void reset_thread_stats(struct thread_data *thread_data)
 static void sleep_for_runtime(struct thread_data *message_threads_mem)
 {
 	struct timeval now;
+	struct timeval zero_time;
 	struct timeval last_calc;
 	struct timeval start;
 	struct stats stats;
@@ -971,11 +979,13 @@ static void sleep_for_runtime(struct thread_data *message_threads_mem)
 	unsigned long long runtime_usec = runtime * USEC_PER_SEC;
 	unsigned long long warmup_usec = warmuptime * USEC_PER_SEC;
 	unsigned long long interval_usec = intervaltime * USEC_PER_SEC;
+	unsigned long long zero_usec = zerotime * USEC_PER_SEC;
 	int warmup_done = 0;
 
 	memset(&stats, 0, sizeof(stats));
 	gettimeofday(&start, NULL);
 	last_calc = start;
+	zero_time = start;
 
 	while(1) {
 		gettimeofday(&now, NULL);
@@ -987,6 +997,7 @@ static void sleep_for_runtime(struct thread_data *message_threads_mem)
 		if (runtime_delta > warmup_usec && !warmup_done && warmuptime) {
 			warmup_done = 1;
 			fprintf(stderr, "warmup done, zeroing stats\n");
+			zero_time = now;
 			reset_thread_stats(message_threads_mem);
 		} else if (!pipe_test) {
 			delta = tvdelta(&last_calc, &now);
@@ -996,6 +1007,14 @@ static void sleep_for_runtime(struct thread_data *message_threads_mem)
 					     &loop_count, &loop_runtime);
 				show_latencies(&stats, runtime_delta / USEC_PER_SEC);
 				last_calc = now;
+			}
+		}
+		if (zero_usec) {
+			unsigned long long zero_delta;
+			zero_delta = tvdelta(&zero_time, &now);
+			if (zero_delta > zero_usec) {
+				zero_time = now;
+				reset_thread_stats(message_threads_mem);
 			}
 		}
 		sleep(1);
