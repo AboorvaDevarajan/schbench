@@ -40,6 +40,8 @@ static int worker_threads = 16;
 static int runtime = 30;
 /* -s  usec */
 static int sleeptime = 30000;
+/* -C  usec */
+static int message_cputime = 30000;
 /* -w  seconds */
 static int warmuptime = 5;
 /* -i  seconds */
@@ -81,7 +83,7 @@ enum {
 	HELP_LONG_OPT = 1,
 };
 
-char *option_string = "p:am:t:s:c:r:R:w:i:z:";
+char *option_string = "p:am:t:s:c:C:r:R:w:i:z:";
 static struct option long_options[] = {
 	{"auto", no_argument, 0, 'a'},
 	{"pipe", required_argument, 0, 'p'},
@@ -90,6 +92,7 @@ static struct option long_options[] = {
 	{"runtime", required_argument, 0, 'r'},
 	{"rps", required_argument, 0, 'R'},
 	{"sleeptime", required_argument, 0, 's'},
+	{"message_cputime", required_argument, 0, 's'},
 	{"cputime", required_argument, 0, 'c'},
 	{"warmuptime", required_argument, 0, 'w'},
 	{"intervaltime", required_argument, 0, 'i'},
@@ -104,8 +107,9 @@ static void print_usage(void)
 		"\t-m (--message-threads): number of message threads (def: 2)\n"
 		"\t-t (--threads): worker threads per message thread (def: 16)\n"
 		"\t-r (--runtime): How long to run before exiting (seconds, def: 30)\n"
-		"\t-s (--sleeptime): Message thread latency (usec, def: 10000\n"
-		"\t-c (--cputime): How long to think during loop (usec, def: 10000\n"
+		"\t-s (--sleeptime): Message thread latency (usec, def: 30000\n"
+		"\t-C (--message_cputime): Message thread think time (usec, def: 30000\n"
+		"\t-c (--cputime): How long to think during loop (usec, def: 30000\n"
 		"\t-a (--auto): grow thread count until latencies hurt (def: off)\n"
 		"\t-p (--pipe): transfer size bytes to simulate a pipe test (def: 0)\n"
 		"\t-R (--rps): requests per second mode (count, def: 0)\n"
@@ -122,6 +126,7 @@ static void parse_options(int ac, char **av)
 	int found_sleeptime = -1;
 	int found_cputime = -1;
 	int found_warmuptime = -1;
+	int found_message_cputime = -1;
 
 	while (1) {
 		int option_index = 0;
@@ -147,12 +152,16 @@ static void parse_options(int ac, char **av)
 			sleeptime = 0;
 			cputime = 0;
 			warmuptime = 0;
+			message_cputime = 0;
 			break;
 		case 's':
 			found_sleeptime = atoi(optarg);
 			break;
 		case 'c':
 			found_cputime = atoi(optarg);
+			break;
+		case 'C':
+			found_message_cputime = atoi(optarg);
 			break;
 		case 'w':
 			found_warmuptime = atoi(optarg);
@@ -194,6 +203,8 @@ static void parse_options(int ac, char **av)
 		cputime = found_cputime;
 	if (found_warmuptime >= 0)
 		warmuptime = found_warmuptime;
+	if (found_message_cputime >= 0)
+		message_cputime = message_cputime;
 
 	if (optind < ac) {
 		fprintf(stderr, "Error Extra arguments '%s'\n", av[optind]);
@@ -693,6 +704,35 @@ static struct request *msg_and_wait(struct thread_data *td)
 	return NULL;
 }
 
+#if defined(__x86_64__) || defined(__i386__)
+#define nop __asm__ __volatile__("rep;nop": : :"memory")
+#elif defined(__aarch64__)
+#define nop __asm__ __volatile__("yield" ::: "memory")
+#elif defined(__powerpc64__)
+#define nop __asm__ __volatile__("nop": : :"memory")
+#else
+#error Unsupported architecture
+#endif
+
+static void usec_spin(unsigned long spin_time)
+{
+	struct timeval now;
+	struct timeval start;
+	unsigned long long delta;
+
+	if (spin_time == 0)
+		return;
+
+	gettimeofday(&start, NULL);
+	while (1) {
+		gettimeofday(&now, NULL);
+		delta = tvdelta(&start, &now);
+		if (delta > spin_time)
+			return;
+		nop;
+	}
+}
+
 /*
  * once the message thread starts all his children, this is where he
  * loops until our runtime is up.  Basically this sits around waiting
@@ -713,12 +753,14 @@ static void run_msg_thread(struct thread_data *td)
 			xlist_wake_all(td);
 			break;
 		}
-		fwait(&td->futex, NULL);
+		if (sleeptime)
+			fwait(&td->futex, NULL);
 
 		/*
 		 * messages shouldn't be instant, sleep a little to make them
 		 * wait
 		 */
+		usec_spin(message_cputime);
 		if (!pipe_test && sleeptime) {
 			jitter = rand_r(&seed) % max_jitter;
 			usleep(sleeptime + jitter);
@@ -782,35 +824,6 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 				fpost(&worker_threads_mem[i].futex);
 			break;
 		}
-	}
-}
-
-#if defined(__x86_64__) || defined(__i386__)
-#define nop __asm__ __volatile__("rep;nop": : :"memory")
-#elif defined(__aarch64__)
-#define nop __asm__ __volatile__("yield" ::: "memory")
-#elif defined(__powerpc64__)
-#define nop __asm__ __volatile__("nop": : :"memory")
-#else
-#error Unsupported architecture
-#endif
-
-static void usec_spin(unsigned long spin_time)
-{
-	struct timeval now;
-	struct timeval start;
-	unsigned long long delta;
-
-	if (spin_time == 0)
-		return;
-
-	gettimeofday(&start, NULL);
-	while (1) {
-		gettimeofday(&now, NULL);
-		delta = tvdelta(&start, &now);
-		if (delta > spin_time)
-			return;
-		nop;
 	}
 }
 
@@ -994,12 +1007,14 @@ static void sleep_for_runtime(struct thread_data *message_threads_mem)
 		if (runtime_usec && runtime_delta >= runtime_usec)
 			break;
 
-		if (runtime_delta > warmup_usec && !warmup_done && warmuptime) {
+		if (!requests_per_sec && !pipe_test &&
+		    runtime_delta > warmup_usec &&
+		    !warmup_done && warmuptime) {
 			warmup_done = 1;
 			fprintf(stderr, "warmup done, zeroing stats\n");
 			zero_time = now;
 			reset_thread_stats(message_threads_mem);
-		} else if (!pipe_test) {
+		} else if (!pipe_test && !requests_per_sec) {
 			delta = tvdelta(&last_calc, &now);
 			if (delta >= interval_usec) {
 				memset(&stats, 0, sizeof(stats));
@@ -1115,8 +1130,7 @@ again:
 
 			bump = ((bump + 4) / 5) * 5;
 
-			rps_math = loop_count * USEC_PER_SEC;
-			rps_math /= loop_runtime;
+			rps_math = loops_per_sec * worker_threads;
 			fprintf(stdout, "rps: %.2f p95 (usec) %d p99 (usec) %d p95/cputime %.2f%% p99/cputime %.2f%%\n",
 				rps_math, p95, p99, ((double)p95 / cputime) * 100,
 				diff * 100);
