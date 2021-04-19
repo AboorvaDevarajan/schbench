@@ -53,6 +53,8 @@ static int zerotime = 0;
 static unsigned long long cputime = 30000;
 /* -a, bool */
 static int autobench = 0;
+/* -j jitter bool */
+static int jitter = 0;
 /* -A, int percentage busy */
 static int auto_rps = 0;
 /* -p bytes */
@@ -86,9 +88,10 @@ enum {
 	HELP_LONG_OPT = 1,
 };
 
-char *option_string = "p:am:t:s:c:C:r:R:w:i:z:A:";
+char *option_string = "p:am:t:s:c:C:r:R:w:i:z:A:j";
 static struct option long_options[] = {
 	{"auto", no_argument, 0, 'a'},
+	{"jitter", no_argument, 0, 'a'},
 	{"pipe", required_argument, 0, 'p'},
 	{"message-threads", required_argument, 0, 'm'},
 	{"threads", required_argument, 0, 't'},
@@ -115,6 +118,7 @@ static void print_usage(void)
 		"\t-C (--message_cputime): Message thread think time (usec, def: 30000\n"
 		"\t-c (--cputime): How long to think during loop (usec, def: 30000\n"
 		"\t-a (--auto): grow thread count until latencies hurt (def: off)\n"
+		"\t-j (--jitter): add jitter to sleep/cputimes (def: off)\n"
 		"\t-A (--auto-rps): grow RPS until cpu utilization hits target (def: none)\n"
 		"\t-p (--pipe): transfer size bytes to simulate a pipe test (def: 0)\n"
 		"\t-R (--rps): requests per second mode (count, def: 0)\n"
@@ -146,6 +150,9 @@ static void parse_options(int ac, char **av)
 		case 'a':
 			autobench = 1;
 			warmuptime = 0;
+			break;
+		case 'j':
+			jitter = 1;
 			break;
 		case 'A':
 			auto_rps = atoi(optarg);
@@ -804,6 +811,12 @@ static void usec_spin(unsigned long spin_time)
 
 	if (spin_time == 0)
 		return;
+
+	if (jitter) {
+		unsigned int seed = pthread_self();
+		unsigned long new_time = rand_r(&seed) % spin_time;
+		spin_time = new_time + 1;
+	}
 
 	gettimeofday(&start, NULL);
 	while (1) {
