@@ -740,12 +740,13 @@ float read_busy(int fd, char *buf, int len,
 	char *c;
 	char *save = NULL;
 
+
 	ret = lseek(fd, 0, SEEK_SET);
 	if (ret < 0) {
 		perror("lseek");
 		exit(1);
 	}
-	ret = read(fd, buf, len);
+	ret = read(fd, buf, len-1);
 	if (ret < 0) {
 		perror("failed to read /proc/stat");
 		exit(1);
@@ -941,7 +942,6 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 	int wakeups_required;
 	/* start and end of the thread run */
 	struct timeval start;
-	struct timeval last_scale = { 0, };
 	struct request *request;
 
 	/* how long do we sleep between wakeup batches */
@@ -950,11 +950,6 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 	unsigned long total_wakes = 0;
 	int cur_tid = 0;
 	int i;
-
-	/* if we're autoscaling RPS */
-	int proc_stat_fd = -1;
-	unsigned long long total_time = 0;
-	unsigned long long total_idle = 0;
 
 	gettimeofday(&start, NULL);
 
@@ -974,7 +969,7 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 			cur_tid++;
 
 			/* at some point, there's just too much, don't queue more */
-			if (worker->pending > 1024) {
+			if (worker->pending > 8) {
 				continue;
 			}
 			worker->pending++;
@@ -991,21 +986,8 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 				fpost(&worker_threads_mem[i].futex);
 			break;
 		}
-		if (auto_rps) {
-			struct timeval now;
-			unsigned long long delta;
-
-			gettimeofday(&now, NULL);
-			delta = tvdelta(&last_scale, &now);
-			if (delta > 1 * USEC_PER_SEC) {
-				auto_scale_rps(&proc_stat_fd, &total_time, &total_idle);
-				last_scale = now;
-			}
-		}
 
 	}
-	if (proc_stat_fd >= 0)
-		close(proc_stat_fd);
 	fprintf(stderr, "final rps was %llu\n", requests_per_sec);
 }
 
@@ -1177,6 +1159,12 @@ static void sleep_for_runtime(struct thread_data *message_threads_mem)
 	unsigned long long zero_usec = zerotime * USEC_PER_SEC;
 	int warmup_done = 0;
 
+	/* if we're autoscaling RPS */
+	int proc_stat_fd = -1;
+	unsigned long long total_time = 0;
+	unsigned long long total_idle = 0;
+
+
 	memset(&stats, 0, sizeof(stats));
 	gettimeofday(&start, NULL);
 	last_calc = start;
@@ -1218,8 +1206,12 @@ static void sleep_for_runtime(struct thread_data *message_threads_mem)
 				reset_thread_stats(message_threads_mem);
 			}
 		}
+		if (auto_rps)
+			auto_scale_rps(&proc_stat_fd, &total_time, &total_idle);
 		sleep(1);
 	}
+	if (proc_stat_fd >= 0)
+		close(proc_stat_fd);
 	__sync_synchronize();
 	stopping = 1;
 }
