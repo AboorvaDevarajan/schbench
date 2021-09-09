@@ -157,6 +157,8 @@ static void parse_options(int ac, char **av)
 		case 'A':
 			auto_rps = atoi(optarg);
 			warmuptime = 0;
+			if (requests_per_sec == 0)
+				requests_per_sec = 10;
 			break;
 		case 'p':
 			pipe_test = atoi(optarg);
