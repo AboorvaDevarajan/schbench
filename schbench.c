@@ -51,6 +51,10 @@ static int intervaltime = 10;
 static int zerotime = 0;
 /* -c  usec */
 static unsigned long long cputime = 30000;
+/* -f  cache_footprint_kb */
+static unsigned long cache_footprint_kb = 1536;
+/* -n  operations */
+static unsigned long operations = 0;
 /* -a, bool */
 static int autobench = 0;
 /* -j jitter bool */
@@ -64,6 +68,9 @@ static unsigned long long requests_per_sec = 0;
 
 /* the message threads flip this to true when they decide runtime is up */
 static volatile unsigned long stopping = 0;
+
+/* size of matrices to multiply */
+static unsigned long matrix_size = 0;
 
 
 /*
@@ -88,7 +95,7 @@ enum {
 	HELP_LONG_OPT = 1,
 };
 
-char *option_string = "p:am:t:s:c:C:r:R:w:i:z:A:j";
+char *option_string = "p:am:t:s:c:C:r:R:w:i:z:A:jn:F:";
 static struct option long_options[] = {
 	{"auto", no_argument, 0, 'a'},
 	{"jitter", no_argument, 0, 'j'},
@@ -101,6 +108,8 @@ static struct option long_options[] = {
 	{"sleeptime", required_argument, 0, 's'},
 	{"message_cputime", required_argument, 0, 'C'},
 	{"cputime", required_argument, 0, 'c'},
+	{"cache_footprint", required_argument, 0, 'f'},
+	{"operations", required_argument, 0, 'n'},
 	{"warmuptime", required_argument, 0, 'w'},
 	{"intervaltime", required_argument, 0, 'i'},
 	{"zerotime", required_argument, 0, 'z'},
@@ -117,6 +126,8 @@ static void print_usage(void)
 		"\t-s (--sleeptime): Message thread latency (usec, def: 30000\n"
 		"\t-C (--message_cputime): Message thread think time (usec, def: 30000\n"
 		"\t-c (--cputime): How long to think during loop (usec, def: 30000\n"
+		"\t-F (--cache_footprint): cache footprint (kb, def: 6144)\n"
+		"\t-n (--operations): operations to perform (def: 0)\n"
 		"\t-a (--auto): grow thread count until latencies hurt (def: off)\n"
 		"\t-j (--jitter): add jitter to sleep/cputimes (def: off)\n"
 		"\t-A (--auto-rps): grow RPS until cpu utilization hits target (def: none)\n"
@@ -201,6 +212,12 @@ static void parse_options(int ac, char **av)
 			break;
 		case 'R':
 			requests_per_sec = atoi(optarg);
+			break;
+		case 'n':
+			operations = atoi(optarg);
+			break;
+		case 'F':
+			cache_footprint_kb = atoi(optarg);
 			break;
 		case '?':
 		case HELP_LONG_OPT:
@@ -485,6 +502,9 @@ struct thread_data {
 	unsigned long pending;
 
 	char pipe_page[PIPE_TRANSFER_BUFFER];
+
+	/* matrices to multiply */
+	unsigned long *data;
 };
 
 /* we're so fancy we make our own futex wrappers */
@@ -994,6 +1014,45 @@ static void run_rps_thread(struct thread_data *worker_threads_mem)
 }
 
 /*
+ * multiply two matrices in a naive way to emulate some cache footprint
+ */
+static void do_some_math(struct thread_data *thread_data)
+{
+	unsigned long i, j, k;
+	unsigned long *m1, *m2, *m3;
+
+	m1 = &thread_data->data[0];
+	m2 = &thread_data->data[matrix_size * matrix_size];
+	m3 = &thread_data->data[2 * matrix_size * matrix_size];
+
+	for (i = 0; i < matrix_size; i++) {
+		for (j = 0; j < matrix_size; j++) {
+			m3[i * matrix_size + j] = 0;
+
+			for (k = 0; k < matrix_size; k++)
+				m3[i * matrix_size + j] +=
+					m1[i * matrix_size + k] *
+					m2[k * matrix_size + j];
+		}
+	}
+}
+
+/*
+ * spin or do some matrix arithmetic
+ */
+static void do_work(struct thread_data *td)
+{
+	if (matrix_size) {
+		unsigned long i;
+
+		for (i = 0; i < operations; i++)
+			do_some_math(td);
+	} else {
+		usec_spin(cputime);
+	}
+}
+
+/*
  * the worker thread is pretty simple, it just does a single spin and
  * then waits on a message from the message thread
  */
@@ -1014,7 +1073,7 @@ void *worker_thread(void *arg)
 			while (req) {
 				struct request *tmp = req->next;
 
-				usec_spin(cputime);
+				do_work(td);
 
 				gettimeofday(&now, NULL);
 				delta = tvdelta(&req->start_time, &now);
@@ -1030,7 +1089,7 @@ void *worker_thread(void *arg)
 				td->loop_count++;
 			}
 		} else {
-			usec_spin(cputime);
+			do_work(td);
 			td->loop_count++;
 			gettimeofday(&now, NULL);
 			td->runtime = tvdelta(&start, &now);
@@ -1065,6 +1124,14 @@ void *message_thread(void *arg)
 
 	for (i = 0; i < worker_threads; i++) {
 		pthread_t tid;
+
+		if (matrix_size) {
+			worker_threads_mem[i].data = malloc(3 * sizeof(unsigned long) * matrix_size * matrix_size);
+			if (!worker_threads_mem[i].data) {
+				perror("unable to allocate ram");
+				pthread_exit((void *)-ENOMEM);
+			}
+		}
 
 		worker_threads_mem[i].msg_thread = td;
 		ret = pthread_create(&tid, NULL, worker_thread,
@@ -1233,6 +1300,9 @@ int main(int ac, char **av)
 	unsigned long long loop_runtime;
 
 	parse_options(ac, av);
+
+	if (operations)
+		matrix_size = sqrt(cache_footprint_kb * 1024 / 3 / sizeof(unsigned long));
 
 again:
 	requests_per_sec /= message_threads;

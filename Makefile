@@ -13,7 +13,7 @@ all: $(ALL)
 	$(CC) -o $*.o -c $(ALL_CFLAGS) $<
 
 schbench: schbench.o
-	$(CC) $(ALL_CFLAGS) -o $@ $(filter %.o,$^) -lpthread
+	$(CC) $(ALL_CFLAGS) -o $@ $(filter %.o,$^) -lpthread -lm
 
 depend:
 	@$(CC) -MM $(ALL_CFLAGS) *.c 1> .depend
