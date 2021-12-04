@@ -408,8 +408,8 @@ static void show_latencies(struct stats *s, unsigned long long runtime)
 	if (len) {
 		fprintf(stderr, "Latency percentiles (usec) runtime %llu (s) (%lu total samples)\n", runtime, s->nr_samples);
 		for (i = 0; i < len; i++)
-			fprintf(stderr, "\t%s%2.1fth: %u (%lu samples)\n",
-				i == PLIST_P99 ? "*" : "",
+			fprintf(stderr, "\t%s%2.1fth: %-10u (%lu samples)\n",
+				i == PLIST_P99 ? "* " : "  ",
 				plist[i], ovals[i], ocounts[i]);
 	}
 
@@ -418,7 +418,7 @@ static void show_latencies(struct stats *s, unsigned long long runtime)
 	if (ocounts)
 		free(ocounts);
 
-	fprintf(stderr, "\tmin=%u, max=%u\n", s->min, s->max);
+	fprintf(stderr, "\t  min=%u, max=%u\n", s->min, s->max);
 }
 
 /* fold latency info from s into d */
