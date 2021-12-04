@@ -91,7 +91,7 @@ enum {
 char *option_string = "p:am:t:s:c:C:r:R:w:i:z:A:j";
 static struct option long_options[] = {
 	{"auto", no_argument, 0, 'a'},
-	{"jitter", no_argument, 0, 'a'},
+	{"jitter", no_argument, 0, 'j'},
 	{"pipe", required_argument, 0, 'p'},
 	{"message-threads", required_argument, 0, 'm'},
 	{"threads", required_argument, 0, 't'},
@@ -99,7 +99,7 @@ static struct option long_options[] = {
 	{"rps", required_argument, 0, 'R'},
 	{"auto-rps", required_argument, 0, 'A'},
 	{"sleeptime", required_argument, 0, 's'},
-	{"message_cputime", required_argument, 0, 's'},
+	{"message_cputime", required_argument, 0, 'C'},
 	{"cputime", required_argument, 0, 'c'},
 	{"warmuptime", required_argument, 0, 'w'},
 	{"intervaltime", required_argument, 0, 'i'},
