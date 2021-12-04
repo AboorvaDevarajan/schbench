@@ -456,6 +456,13 @@ static void add_lat(struct stats *s, unsigned int us)
 {
 	int lat_index = 0;
 
+	if (!matrix_size) {
+		if (us > cputime)
+			us -= cputime;
+		else
+			us = 1;
+	}
+
 	if (us > s->max)
 		s->max = us;
 	if (s->min == 0 || us < s->min)
@@ -699,8 +706,6 @@ static void xlist_wake_all(struct thread_data *td)
  */
 static struct request *msg_and_wait(struct thread_data *td)
 {
-	struct timeval now;
-	unsigned long long delta;
 	struct request *req;
 
 	if (pipe_test)
@@ -735,12 +740,6 @@ static struct request *msg_and_wait(struct thread_data *td)
 		fwait(&td->futex, NULL);
 	}
 
-	if (!requests_per_sec) {
-		gettimeofday(&now, NULL);
-		delta = tvdelta(&td->wake_time, &now);
-		if (delta > 0)
-			add_lat(&td->stats, delta);
-	}
 	return NULL;
 }
 
@@ -1069,6 +1068,7 @@ void *worker_thread(void *arg)
 		if (stopping)
 			break;
 
+		req = msg_and_wait(td);
 		if (requests_per_sec) {
 			while (req) {
 				struct request *tmp = req->next;
@@ -1078,10 +1078,6 @@ void *worker_thread(void *arg)
 				gettimeofday(&now, NULL);
 				delta = tvdelta(&req->start_time, &now);
 				td->runtime = tvdelta(&start, &now);
-				if (delta > cputime)
-					delta -= cputime;
-				else
-					delta = 1;
 				add_lat(&td->stats, delta);
 
 				free(req);
@@ -1095,7 +1091,12 @@ void *worker_thread(void *arg)
 			td->runtime = tvdelta(&start, &now);
 		}
 
-		req = msg_and_wait(td);
+		if (!requests_per_sec) {
+			gettimeofday(&now, NULL);
+			delta = tvdelta(&td->wake_time, &now);
+			if (delta > 0)
+				add_lat(&td->stats, delta);
+		}
 	}
 	gettimeofday(&now, NULL);
 	td->runtime = tvdelta(&start, &now);
